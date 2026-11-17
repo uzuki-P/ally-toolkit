@@ -21,6 +21,7 @@ func TestSnapshots(t *testing.T) {
 	mk := func() *app {
 		a := fakeApp(t)
 		a.combos = []string{"close tab", "next tab", "reopen closed tab"}
+		a.gyro = &gyroService{model: modelFor("RC71L")}
 		a.cfg.BackupDir = `C:\Users\uzuki_p`
 		a.backups = []backup{
 			{Path: "a", Time: day, Size: 9420},
@@ -38,6 +39,13 @@ func TestSnapshots(t *testing.T) {
 			a.steps = [stepCount]stepState{stateDone, stateDone, stateActive, statePending}
 			a.notes = [stepCount]string{"3 hidden", "Left to open", "", ""}
 		},
+		"gyro": func(a *app) {
+			a.cfg.GyroServer = true
+			a.gyro.st = gyroStatus{running: true, live: true, clients: 1, rate: 98,
+				pose:   eulerQuat(0.5, 0.45, -0.25),
+				sample: dsuSample{accel: [3]float32{0.02, -0.97, 0.21}, gyro: [3]float32{-12, 31, 4}}}
+			a.gyroCentered = true
+		},
 		"done": func(a *app) {
 			a.runStart = time.Now().Add(-40 * time.Second)
 			a.runEnd = time.Now()
@@ -52,7 +60,7 @@ func TestSnapshots(t *testing.T) {
 		for _, dark := range []bool{false, true} {
 			a := mk()
 			set(a)
-			tt := ui.NewTester(a.view, 600, 900)
+			tt := ui.NewTester(a.view, 600, 1500)
 			tt.SetDark(dark)
 			tt.Frame()
 			file := name

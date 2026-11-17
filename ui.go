@@ -63,6 +63,10 @@ func (a *app) view(c *ui.Context) {
 			a.stepsView(c, pl)
 			a.optionsView(c, pl)
 			ui.Divider(c)
+			if a.gyro != nil {
+				a.gyroView(c, pl)
+				ui.Divider(c)
+			}
 			a.backupsView(c, pl)
 		})
 	})

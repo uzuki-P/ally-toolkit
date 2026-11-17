@@ -23,6 +23,10 @@ type app struct {
 	tray  *mygo.Tray
 	watch *watcher
 	cfg   settings
+	gyro  *gyroService
+
+	gyroYaw0     float64 // the preview's straight ahead (Center)
+	gyroCentered bool
 
 	pkg     paths
 	pkgErr  string
@@ -50,8 +54,10 @@ type app struct {
 }
 
 func newApp() *app {
-	a := &app{watch: &watcher{}, cfg: loadSettings(), fix: runFix}
+	a := &app{watch: &watcher{}, cfg: loadSettings(), fix: runFix, gyro: newGyroService()}
 	a.watch.enabled.Store(a.cfg.AutoFix)
+	a.gyro.invertUD.Store(a.cfg.GyroInvertUD)
+	a.gyro.invertLR.Store(a.cfg.GyroInvertLR)
 	a.startup = startupEnabled()
 	a.refresh()
 	return a
@@ -224,6 +230,8 @@ func (a *app) showWindow() {
 func (a *app) makeTray() {
 	auto := &mygo.MenuItem{Label: "Fix it whenever Armoury Crate opens", Type: mygo.MenuItemCheckbox, Checked: a.cfg.AutoFix,
 		Click: func(it *mygo.MenuItem, _ *mygo.Window) { a.onMain(func() { a.setAutoFix(it.Checked) }) }}
+	gyro := &mygo.MenuItem{Label: "Send the gyro to games", Type: mygo.MenuItemCheckbox, Checked: a.cfg.GyroServer,
+		Click: func(it *mygo.MenuItem, _ *mygo.Window) { a.onMain(func() { a.setGyro(it.Checked) }) }}
 	startup := &mygo.MenuItem{Label: "Start with Windows", Type: mygo.MenuItemCheckbox, Checked: a.startup,
 		Click: func(it *mygo.MenuItem, _ *mygo.Window) { a.onMain(func() { a.setStartup(it.Checked) }) }}
 	tray, err := mygo.NewTray(mygo.TrayOptions{
@@ -236,6 +244,7 @@ func (a *app) makeTray() {
 			{Label: "Back up layout", Click: func(*mygo.MenuItem, *mygo.Window) { a.onMain(a.backupNow) }},
 			mygo.Separator(),
 			auto,
+			gyro,
 			startup,
 			mygo.Separator(),
 			{Role: mygo.RoleQuit},
@@ -261,6 +270,7 @@ func main() {
 
 	quitting := false
 	mygo.App.OnBeforeQuit(func(*mygo.QuitEvent) { quitting = true })
+	mygo.App.OnWillQuit(func(*mygo.QuitEvent) { a.gyro.stop() })
 	mygo.App.OnQuitCanceled(func() { quitting = false })
 	mygo.App.OnSecondInstance(func([]string, string) { a.showWindow() })
 
@@ -283,6 +293,9 @@ func main() {
 			}
 		})
 		a.makeTray()
+		if a.cfg.GyroServer {
+			a.gyro.start()
+		}
 
 		// The Ally's Armoury Crate button opens it on its own: hide the key
 		// combinations at once, before it reads them, and let it load.

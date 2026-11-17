@@ -37,8 +37,11 @@ func (b backup) Name() string { return filepath.Base(b.Path) }
 
 // Settings are kept in %APPDATA%\armoury-crate-fix\settings.json.
 type settings struct {
-	AutoFix   bool   `json:"autoFix"`
-	BackupDir string `json:"backupDir"`
+	AutoFix      bool   `json:"autoFix"`
+	BackupDir    string `json:"backupDir"`
+	GyroServer   bool   `json:"gyroServer"`
+	GyroInvertUD bool   `json:"gyroInvertUpDown"`
+	GyroInvertLR bool   `json:"gyroInvertLeftRight"`
 }
 
 func settingsPath() string {
