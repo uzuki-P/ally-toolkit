@@ -1,0 +1,6 @@
+{
+  "name": "armoury-crate-fix",
+  "identifier": "com.example.armourycratefix",
+  "version": "0.3.0",
+  "out": "build"
+}
