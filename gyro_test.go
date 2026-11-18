@@ -4,19 +4,34 @@ import (
 	"encoding/binary"
 	"math"
 	"net"
+	"sync"
 	"testing"
 	"time"
 )
 
 // fakeSensor is a motion sensor that reads what the test sets.
 type fakeSensor struct {
+	mu          sync.Mutex
 	gyro, accel reading
 	signal      chan struct{}
 }
 
-func (f *fakeSensor) read() (reading, reading, bool) { return f.gyro, f.accel, true }
-func (f *fakeSensor) updated() <-chan struct{}       { return f.signal }
-func (f *fakeSensor) close()                         {}
+func (f *fakeSensor) read() (reading, reading, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.gyro, f.accel, true
+}
+
+// report is a new gyroscope reading, taken at ticks.
+func (f *fakeSensor) report(ticks int64, g reading) {
+	f.mu.Lock()
+	g.ticks = ticks
+	f.gyro = g
+	f.mu.Unlock()
+	f.signal <- struct{}{}
+}
+func (f *fakeSensor) updated() <-chan struct{} { return f.signal }
+func (f *fakeSensor) close()                   {}
 
 // dsuClient asks a server for slot 0's motion, as Savage Wind's dsu.c does.
 func dsuClient(t *testing.T, server *net.UDPAddr) *net.UDPConn {
@@ -121,7 +136,7 @@ func TestDSUServer(t *testing.T) {
 	// Handheld Companion's ROG Ally: upright reads as a controller lying flat (DSU flat: 0, -1, 0), turning left as yaw
 	a := [3]float32{f32(second[76:]), f32(second[80:]), f32(second[84:])}
 	w := [3]float32{f32(second[88:]), f32(second[92:]), f32(second[96:])}
-	if a != [3]float32{0, -1, 0} || w != [3]float32{0, 30, 0} {
+	if a != [3]float32{0, -1, 0} || w != [3]float32{0, -30, 0} { // (DSU's yaw: negative is left)
 		t.Fatalf("accel %v gyro %v", a, w)
 	}
 	time.Sleep(600 * time.Millisecond)
@@ -149,23 +164,23 @@ func TestDSUPortTaken(t *testing.T) {
 	}
 }
 
-// The Ally's axes against Handheld Companion's chain, worked by hand from
-// ROGAlly.json, MotionManager.SwapYawRoll and DSUServer's signs.
+// The Ally's axes, worked by hand: X un-mirrored, then (-X, Z, Y) in the
+// game's axes for both sensors, then DSU's as Savage Wind's dsu.c reads them.
 func TestAllyAxes(t *testing.T) {
 	ally := modelFor("ROG Ally RC71L_RC71L RC71L")
 	if ally.name != "ROG Ally" || modelFor("ROG Ally X RC72LA").name != "ROG Ally X" || modelFor("Some PC").name != "this PC" {
 		t.Fatal("models")
 	}
 	a, g := toDSU(ally, reading{x: 1, y: 2, z: 3}, reading{x: 0.1, y: 0.2, z: 0.3}, false, false)
-	if g != [3]float32{-1, 2, -3} || a != [3]float32{0.1, 0.2, -0.3} {
+	if g != [3]float32{1, -2, 3} || a != [3]float32{0.1, 0.2, -0.3} {
 		t.Fatalf("ROG Ally: accel %v gyro %v", a, g)
 	}
 	a, g = toDSU(ally, reading{x: 1, y: 2, z: 3}, reading{x: 0.1, y: 0.2, z: 0.3}, true, false)
-	if g != [3]float32{1, -2, -3} || a != [3]float32{-0.1, -0.2, -0.3} {
+	if g != [3]float32{-1, 2, 3} || a != [3]float32{-0.1, -0.2, -0.3} {
 		t.Fatalf("up and down inverted: accel %v gyro %v", a, g)
 	}
 	a, g = toDSU(ally, reading{x: 1, y: 2, z: 3}, reading{x: 0.1, y: 0.2, z: 0.3}, false, true)
-	if g != [3]float32{-1, -2, 3} || a != [3]float32{0.1, -0.2, 0.3} {
+	if g != [3]float32{1, 2, -3} || a != [3]float32{0.1, -0.2, 0.3} {
 		t.Fatalf("left and right inverted: accel %v gyro %v", a, g)
 	}
 }
@@ -185,5 +200,134 @@ func TestFusionFollows(t *testing.T) {
 	}
 	if tilt := math.Asin(m[2][1]) * 180 / math.Pi; math.Abs(tilt) > 1 {
 		t.Fatalf("tilted %.1f° by a level turn", tilt)
+	}
+}
+
+// As held: the Ally's own readings at rest put the drawing as it lies (its
+// readings: upright Y -1 G, lying screen up Z -1 G, as Windows reads them).
+func TestHeldPose(t *testing.T) {
+	ally := modelFor("RC71L")
+	for _, c := range []struct {
+		name  string
+		accel reading
+		axis  int // the device axis that should point up: 1 its top, 2 out of its screen
+	}{
+		{"upright", reading{x: -0.01, y: -1.006, z: -0.148}, 1},
+		{"lying screen up", reading{x: 0, y: 0, z: -0.98}, 2},
+	} {
+		var f fusion
+		a, w := held(ally, reading{}, c.accel)
+		f.step(a, w, 0)
+		m := f.q.mat()
+		if up := m[2][c.axis]; up < 0.95 {
+			t.Errorf("%s: axis %d points %.2f up, want about 1", c.name, c.axis, up)
+		}
+	}
+}
+
+// rotate is v turned by q.
+func rotate(q quat, v vec3) vec3 {
+	m := q.mat()
+	return vec3{m[0][0]*v[0] + m[0][1]*v[1] + m[0][2]*v[2], m[1][0]*v[0] + m[1][1]*v[1] + m[1][2]*v[2],
+		m[2][0]*v[0] + m[2][1]*v[1] + m[2][2]*v[2]}
+}
+
+// allyReading is what an RC71L's sensor reads (Windows' axes, X mirrored on
+// both) for a device whose pose is q (its axes in the world) turning at w
+// (radians a second, its own axes).
+func allyReading(q quat, w vec3) (gyro, accel reading) {
+	inv := quat{q.w, -q.x, -q.y, -q.z}
+	g := rotate(inv, vec3{0, 0, -1}) // (gravity's direction in its axes)
+	const deg = 180 / math.Pi
+	return reading{x: -w[0] * deg, y: w[1] * deg, z: w[2] * deg}, reading{x: -g[0], y: g[1], z: g[2]}
+}
+
+// Tilted and held there, the pose a game makes of the reports stays tilted:
+// the gyroscope's turn and gravity agree. (They didn't: the tilt crept back to
+// where it began, the aim with it.)
+func TestTiltStays(t *testing.T) {
+	ally := modelFor("RC71L")
+	for _, c := range []struct {
+		name string
+		axis vec3 // the turn, in the Ally's own axes
+	}{
+		{"top away", vec3{-1, 0, 0}},
+		{"top toward you", vec3{1, 0, 0}},
+		{"lean right", vec3{0, 0, -1}},
+		{"lean left", vec3{0, 0, 1}},
+	} {
+		q := quat{math.Cos(math.Pi / 4), math.Sin(math.Pi / 4), 0, 0} // upright, its screen toward you
+		var f fusion
+		const dt, rate = 0.01, 60 * math.Pi / 180
+		step := func(w vec3) {
+			gy, ac := allyReading(q, w)
+			a, g := toDSU(ally, gy, ac, false, false)
+			f.update(a, g, dt)
+		}
+		for i := 0; i < 50; i++ { // still
+			step(vec3{})
+		}
+		start := f.q
+		w := vec3{c.axis[0] * rate, c.axis[1] * rate, c.axis[2] * rate}
+		for i := 0; i < 50; i++ { // half a second at 60°/s: 30°
+			h := rate * dt / 2
+			q = q.mul(quat{math.Cos(h), c.axis[0] * math.Sin(h), c.axis[1] * math.Sin(h), c.axis[2] * math.Sin(h)}).norm()
+			step(w)
+		}
+		for i := 0; i < 300; i++ { // held there for 3 s
+			step(vec3{})
+		}
+		d := start.mul(quat{f.q.w, -f.q.x, -f.q.y, -f.q.z}) // (from the start to now)
+		angle := 2 * math.Acos(math.Min(1, math.Abs(d.w))) * 180 / math.Pi
+		if math.Abs(angle-30) > 2 {
+			t.Errorf("%s: the game's pose turned %.1f° and stayed, want 30°", c.name, angle)
+		}
+	}
+}
+
+// Each report carries its reading's own time (the sensor's, ~15.6 ms apart on
+// the Ally), not when it reached the app; a still sensor's last reading is sent
+// again after gyroKeepAlive, its time going on from there.
+func TestReportTimes(t *testing.T) {
+	src := &fakeSensor{signal: make(chan struct{}, 1), accel: reading{ticks: 1, y: -1}}
+	probe, err := listenDSU("127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := probe.addr().String()
+	probe.close()
+	g := &gyroService{addr: addr, model: modelFor("RC71L"),
+		open: func() (motionSource, func(), error) { return src, func() {}, nil }}
+	src.report(5_000_000, reading{y: 10})
+	g.start()
+	defer g.stop()
+	server, _ := net.ResolveUDPAddr("udp4", addr)
+	c := dsuClient(t, server)
+	_, _ = c.Write(dsuRequest(dsuDataMsg, 0, 0, 0, 0, 0, 0, 0, 0))
+	time.Sleep(100 * time.Millisecond) // (subscribed; the first reading repeated meanwhile)
+	for len(src.signal) > 0 {
+	}
+	drain := func() uint64 { // the newest report's time
+		var at uint64
+		_ = c.SetReadDeadline(time.Now().Add(30 * time.Millisecond))
+		buf := make([]byte, 2048)
+		for {
+			n, err := c.Read(buf)
+			if err != nil {
+				return at
+			}
+			if n == 100 {
+				at = binary.LittleEndian.Uint64(buf[68:])
+			}
+		}
+	}
+	drain()
+	var times []uint64
+	for k := 1; k <= 3; k++ {
+		src.report(5_000_000+int64(k)*156_000, reading{y: 10}) // (15.6 ms apart, delivered whenever)
+		times = append(times, drain())
+	}
+	if times[1]-times[0] != 15_600 || times[2]-times[1] != 15_600 {
+		t.Fatalf("report times %v µs: want 15600 apart, as the sensor took them", times)
 	}
 }

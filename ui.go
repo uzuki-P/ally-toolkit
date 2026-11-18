@@ -267,6 +267,9 @@ func (a *app) optionsView(c *ui.Context, pl palette) {
 		a.switchRow(c, pl, &a.cfg.AutoFix, "Fix it whenever Armoury Crate opens",
 			"Covers the Armoury Crate button and the Start menu.",
 			func(on bool) { a.setAutoFix(on) })
+		a.switchRow(c, pl, &a.cfg.KeepAwake, "Keep Windows awake",
+			"Keeps the PC and its screen on, like PowerToys Awake. The tray icon shows a green dot while it is on.",
+			func(on bool) { a.setKeepAwake(on) })
 		a.switchRow(c, pl, &a.startup, "Start with Windows",
 			"Waits in the tray. Click the tray icon to come back here.",
 			func(on bool) { a.setStartup(on) })

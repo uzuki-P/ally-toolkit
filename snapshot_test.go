@@ -42,7 +42,7 @@ func TestSnapshots(t *testing.T) {
 		"gyro": func(a *app) {
 			a.cfg.GyroServer = true
 			a.gyro.st = gyroStatus{running: true, live: true, clients: 1, rate: 98,
-				pose:   eulerQuat(0.5, 0.45, -0.25),
+				pose: eulerQuat(0.5, 0.45, -0.25), held: eulerQuat(0.5, 1.2, -0.2),
 				sample: dsuSample{accel: [3]float32{0.02, -0.97, 0.21}, gyro: [3]float32{-12, 31, 4}}}
 			a.gyroCentered = true
 		},

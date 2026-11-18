@@ -199,28 +199,24 @@ func dsuCRC(p []byte) uint32 {
 
 // ---- the Ally's axes to DSU's
 
-// imuSigns are Handheld Companion's IMU matrix for a model: the signs of its X,
-// Y and Z after its usual axis swap (X, Z, Y), in Resources/Devices/<model>.json.
-type imuSigns [3]float64
-
 type handheldModel struct {
-	product     string // in the firmware's product name
-	name        string
-	gyro, accel imuSigns
+	product string // in the firmware's product name
+	name    string
+	mirrorX bool // its sensor reports X mirrored on both the gyroscope and the accelerometer
 }
 
-// Handheld Companion's matrices for ASUS's handhelds (ROGAlly.json,
-// ROGAllyX.json, XboxROGAlly.json, XboxROGAllyX.json), by the model numbers
-// it finds them by; DefaultDevice.json's for anything else.
+// ASUS's handhelds, by the model numbers Handheld Companion finds them by. The
+// ROG Ally's sensor reports X mirrored (found on an RC71L, #860; the Ally X has
+// the same sensor setup in Handheld Companion); the Xbox Allys' aren't known to.
 var handheldModels = []handheldModel{
-	{"RC71L", "ROG Ally", imuSigns{-1, -1, 1}, imuSigns{-1, -1, 1}},
-	{"RC72LA", "ROG Ally X", imuSigns{-1, -1, 1}, imuSigns{-1, -1, 1}},
-	{"RC73YA", "ROG Xbox Ally", imuSigns{1, 1, -1}, imuSigns{-1, -1, 1}},
-	{"RC73XA", "ROG Xbox Ally X", imuSigns{1, 1, -1}, imuSigns{-1, -1, 1}},
-	{"RC74XA", "ROG Xbox Ally X", imuSigns{1, 1, -1}, imuSigns{-1, -1, 1}},
+	{"RC71L", "ROG Ally", true},
+	{"RC72LA", "ROG Ally X", true},
+	{"RC73YA", "ROG Xbox Ally", false},
+	{"RC73XA", "ROG Xbox Ally X", false},
+	{"RC74XA", "ROG Xbox Ally X", false},
 }
 
-var defaultModel = handheldModel{"", "this PC", imuSigns{1, 1, 1}, imuSigns{1, 1, 1}}
+var defaultModel = handheldModel{"", "this PC", false}
 
 func modelFor(product string) handheldModel {
 	for _, m := range handheldModels {
@@ -231,26 +227,30 @@ func modelFor(product string) handheldModel {
 	return defaultModel
 }
 
-// toDSU turns a reading in Windows' axes into DSU's as Handheld Companion
-// does for a handheld's own sensor: its model's matrix (the axis swap, then
-// the signs), the yaw / roll swap it makes for a sensor in the handheld
-// itself (Steering axis: Auto), its inversions, then its DSU packet's signs.
-// Held as you play, the handheld reads as a controller lying flat.
+// toDSU turns a reading in Windows' axes into DSU's. First the handheld's own
+// axes (held: Windows', X un-mirrored on the Ally). Then one turn of them, the
+// same for both sensors, so the gyroscope and gravity always agree: held as you
+// play, the handheld reads as a controller lying flat, screen up, as Handheld
+// Companion sends it (its X right is the game's X left: its top is the game's
+// face, its face the game's back). In Savage Wind's axes (X right, Y forward,
+// Z up out of the face) that is (-X, Z, Y); DSU's are those as its dsu.c reads
+// them. Handheld Companion's own chain turned the gyroscope against gravity: a
+// game's fusion pulled every tilt back to where it began.
+// The inversions turn both the same way too (Handheld Companion's: up and down
+// flips DSU's X and Y, left and right its Y and Z).
 func toDSU(m handheldModel, gyro, accel reading, invertUD, invertLR bool) (a, g [3]float32) {
-	hc := func(s imuSigns, r reading) [3]float64 {
-		v := [3]float64{s[0] * r.x, s[1] * r.z, s[2] * r.y} // (the matrix: X, Z, Y with its signs)
-		return [3]float64{v[0], -v[2], -v[1]}               // (the yaw / roll swap)
-	}
-	gv, av := hc(m.gyro, gyro), hc(m.accel, accel)
-	if invertLR {
-		gv[1], gv[2], av[1], av[2] = -gv[1], -gv[2], -av[1], -av[2]
-	}
+	pa, pg := held(m, gyro, accel) // (gravity in G; the turn in radians a second)
+	const deg = 180 / math.Pi
+	// the game's axes: s = (-p.x, p.z, p.y); DSU's: acceleration (s.x, s.z, -s.y), turn (s.x, -s.z, s.y)
+	av := [3]float64{-pa[0], pa[1], -pa[2]}
+	gv := [3]float64{-pg[0] * deg, -pg[1] * deg, pg[2] * deg}
 	if invertUD {
 		gv[0], gv[1], av[0], av[1] = -gv[0], -gv[1], -av[0], -av[1]
 	}
-	a = [3]float32{float32(-av[0]), float32(-av[1]), float32(-av[2])}
-	g = [3]float32{float32(gv[0]), float32(-gv[1]), float32(-gv[2])}
-	return a, g
+	if invertLR {
+		gv[1], gv[2], av[1], av[2] = -gv[1], -gv[2], -av[1], -av[2]
+	}
+	return [3]float32{float32(av[0]), float32(av[1]), float32(av[2])}, [3]float32{float32(gv[0]), float32(gv[1]), float32(gv[2])}
 }
 
 func containsFold(s, sub string) bool {

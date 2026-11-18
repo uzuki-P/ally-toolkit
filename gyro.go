@@ -16,8 +16,11 @@ import (
 // Windows Runtime objects live in its apartment) until stopped.
 
 const (
-	gyroAddr      = "127.0.0.1:26760"
-	gyroKeepAlive = 10 * time.Millisecond // a still sensor reports nothing: the last reading again
+	gyroAddr = "127.0.0.1:26760"
+	// A still sensor reports nothing (the Ally's: about 64 readings a second while it moves, none while it lies
+	// still): after this long without one, the last reading again, so games keep the server (Savage Wind drops one
+	// silent for 0.5 s). Longer than the sensor's ~15.6 ms between readings, so never in among them.
+	gyroKeepAlive = 40 * time.Millisecond
 )
 
 type gyroService struct {
@@ -41,6 +44,7 @@ type gyroStatus struct {
 	rate    float64 // the sensor's readings a second
 	sample  dsuSample
 	pose    quat // as a game's fusion has it (Savage Wind's axes)
+	held    quat // the Ally as it is held: X right, Y to the top of its screen, Z out of it
 	live    bool
 }
 
@@ -139,11 +143,17 @@ func (g *gyroService) run(ctx context.Context, done chan struct{}) {
 	start := time.Now()
 	var (
 		fuse    fusion
-		last    uint64    // the last report's time (µs)
-		sent    time.Time // ... on this clock
+		body    fusion    // (the Ally as held)
+		last    uint64    // the last report's time (µs since the first reading)
+		seen    int64     // the last reading's time (the sensor's, 100 ns ticks)
+		real    uint64    // ... its report's time (µs)
+		sent    time.Time // when the last report went (this clock)
 		events  int
 		counted = start
 	)
+	// A report's time is its reading's, as the sensor took it: a game turns the aim by the reading times the time
+	// since the last report, and when the reading reached this app jitters. A repeat while the sensor is still goes
+	// on from the last report by the time since.
 	send := func() {
 		gy, ac, ok := src.read()
 		if !ok {
@@ -151,23 +161,36 @@ func (g *gyroService) run(ctx context.Context, done chan struct{}) {
 		}
 		a, w := toDSU(g.model, gy, ac, g.invertUD.Load(), g.invertLR.Load())
 		now := time.Now()
-		micros := uint64(now.Sub(start).Microseconds())
-		if micros <= last {
+		var micros uint64
+		switch {
+		case sent.IsZero(): // (the first report: time 0)
+		case gy.ticks > seen: // (a new reading: after the last one by the sensor's own gap)
+			micros = real + uint64(gy.ticks-seen)/10
+		default:
+			micros = last + uint64(now.Sub(sent).Microseconds()) // (the last again)
+		}
+		if micros <= last && !sent.IsZero() {
 			micros = last + 1
 		}
+		if gy.ticks != seen || sent.IsZero() {
+			real = micros
+		}
+		seen = gy.ticks
 		dt := float64(micros-last) / 1e6
-		if last == 0 {
+		if sent.IsZero() {
 			dt = 0
 		}
 		last, sent = micros, now
 		m := dsuSample{accel: a, gyro: w, micros: micros}
 		srv.publish(m)
 		fuse.update(a, w, dt)
+		ha, hg := held(g.model, gy, ac)
+		body.step(ha, hg, dt)
 		g.mu.Lock()
-		g.st.sample, g.st.pose, g.st.live = m, fuse.q, fuse.started
+		g.st.sample, g.st.pose, g.st.held, g.st.live = m, fuse.q, body.q, fuse.started && body.started
 		g.mu.Unlock()
 	}
-	tick := time.NewTicker(gyroKeepAlive / 2)
+	tick := time.NewTicker(10 * time.Millisecond)
 	defer tick.Stop()
 	for {
 		select {
@@ -238,8 +261,15 @@ type fusion struct {
 
 const fusionPull = 0.6 // gravity's pull on the tilt, per radian a second
 
+// update takes a DSU report as Savage Wind does (its dsu.c: DSU -> its axes).
 func (f *fusion) update(a, g [3]float32, dt float64) {
-	acc := [3]float64{float64(a[0]), -float64(a[2]), float64(a[1])} // (DSU -> Savage Wind, as its dsu.c)
+	const rad = math.Pi / 180
+	f.step([3]float64{float64(a[0]), -float64(a[2]), float64(a[1])},
+		[3]float64{float64(g[0]) * rad, float64(g[2]) * rad, -float64(g[1]) * rad}, dt)
+}
+
+// step takes gravity's direction (G) and the turn (radians a second) in its axes.
+func (f *fusion) step(acc, raw [3]float64, dt float64) {
 	n := math.Sqrt(acc[0]*acc[0] + acc[1]*acc[1] + acc[2]*acc[2])
 	if !f.started {
 		if n > 0.5 {
@@ -251,8 +281,6 @@ func (f *fusion) update(a, g [3]float32, dt float64) {
 	if dt <= 0 || dt > 0.1 {
 		return
 	}
-	const rad = math.Pi / 180
-	raw := [3]float64{float64(g[0]) * rad, float64(g[2]) * rad, -float64(g[1]) * rad}
 	ka, sd := math.Min(dt/0.2, 1), 0.0
 	for i := range raw {
 		d := raw[i] - f.mean[i]
@@ -281,4 +309,19 @@ func (f *fusion) update(a, g [3]float32, dt float64) {
 		k = math.Sin(h) / wn
 	}
 	f.q = f.q.mul(quat{math.Cos(h), w[0] * k, w[1] * k, w[2] * k}).norm()
+}
+
+// held is a reading in the handheld's own axes (X right, Y to the top of its
+// screen, Z out of it; gravity's direction in G, the turn in radians a second
+// by the right hand), for the preview of the Ally as it is held. Windows'
+// axes are those already, but for X on the ROG Ally and Ally X, which their
+// sensor reports mirrored on both (found on an RC71L, #860). Lying still,
+// Windows reads Y -1 G held upright and Z -1 G lying screen up, as it should.
+func held(m handheldModel, gyro, accel reading) (acc, turn [3]float64) {
+	const rad = math.Pi / 180
+	sx := 1.0
+	if m.mirrorX {
+		sx = -1
+	}
+	return [3]float64{sx * accel.x, accel.y, accel.z}, [3]float64{sx * gyro.x * rad, gyro.y * rad, gyro.z * rad}
 }

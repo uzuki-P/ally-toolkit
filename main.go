@@ -16,6 +16,9 @@ import (
 //go:embed resources/tray.png
 var trayIcon []byte
 
+//go:embed resources/tray-awake.png
+var trayIconAwake []byte
+
 // app is the state the window shows. Worker goroutines change it only
 // through onMain, which runs on the main thread and redraws.
 type app struct {
@@ -24,6 +27,10 @@ type app struct {
 	watch *watcher
 	cfg   settings
 	gyro  *gyroService
+
+	awake     awakeHolder
+	awakeItem *mygo.MenuItem
+	trayMenu  *mygo.Menu
 
 	gyroYaw0     float64 // the preview's straight ahead (Center)
 	gyroCentered bool
@@ -232,23 +239,27 @@ func (a *app) makeTray() {
 		Click: func(it *mygo.MenuItem, _ *mygo.Window) { a.onMain(func() { a.setAutoFix(it.Checked) }) }}
 	gyro := &mygo.MenuItem{Label: "Send the gyro to games", Type: mygo.MenuItemCheckbox, Checked: a.cfg.GyroServer,
 		Click: func(it *mygo.MenuItem, _ *mygo.Window) { a.onMain(func() { a.setGyro(it.Checked) }) }}
+	a.awakeItem = &mygo.MenuItem{Label: "Keep Windows awake", Type: mygo.MenuItemCheckbox, Checked: a.cfg.KeepAwake,
+		Click: func(it *mygo.MenuItem, _ *mygo.Window) { a.onMain(func() { a.setKeepAwake(it.Checked) }) }}
 	startup := &mygo.MenuItem{Label: "Start with Windows", Type: mygo.MenuItemCheckbox, Checked: a.startup,
 		Click: func(it *mygo.MenuItem, _ *mygo.Window) { a.onMain(func() { a.setStartup(it.Checked) }) }}
+	a.trayMenu = mygo.NewMenu([]*mygo.MenuItem{
+		{Label: "Show Armoury Crate Fix", Click: func(*mygo.MenuItem, *mygo.Window) { a.showWindow() }},
+		{Label: "Open Armoury Crate", Click: func(*mygo.MenuItem, *mygo.Window) { a.onMain(a.openClicked) }},
+		{Label: "Back up layout", Click: func(*mygo.MenuItem, *mygo.Window) { a.onMain(a.backupNow) }},
+		mygo.Separator(),
+		auto,
+		gyro,
+		a.awakeItem,
+		startup,
+		mygo.Separator(),
+		{Role: mygo.RoleQuit},
+	})
 	tray, err := mygo.NewTray(mygo.TrayOptions{
 		ID:      "main",
-		Icon:    trayIcon,
-		ToolTip: "Armoury Crate Fix",
-		Menu: mygo.NewMenu([]*mygo.MenuItem{
-			{Label: "Show Armoury Crate Fix", Click: func(*mygo.MenuItem, *mygo.Window) { a.showWindow() }},
-			{Label: "Open Armoury Crate", Click: func(*mygo.MenuItem, *mygo.Window) { a.onMain(a.openClicked) }},
-			{Label: "Back up layout", Click: func(*mygo.MenuItem, *mygo.Window) { a.onMain(a.backupNow) }},
-			mygo.Separator(),
-			auto,
-			gyro,
-			startup,
-			mygo.Separator(),
-			{Role: mygo.RoleQuit},
-		}),
+		Icon:    a.trayIconNow(),
+		ToolTip: a.trayTip(),
+		Menu:    a.trayMenu,
 	})
 	if err != nil {
 		log.Println("tray:", err)
@@ -292,6 +303,7 @@ func main() {
 				a.win.Hide()
 			}
 		})
+		a.awake.set(a.cfg.KeepAwake)
 		a.makeTray()
 		if a.cfg.GyroServer {
 			a.gyro.start()

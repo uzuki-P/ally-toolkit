@@ -4,6 +4,7 @@ import (
 	"crypto/sha1"
 	"encoding/binary"
 	"errors"
+	"math"
 	"sync"
 	"syscall"
 	"unsafe"
@@ -32,6 +33,9 @@ var (
 	iidAgileObject          = mustGUID("{94ea2b94-e9cc-49e0-c0ff-ee64ca8f5b90}")
 	iidGyrometerStatics     = mustGUID("{83b6e7c9-e49d-4b39-86e6-cd554be4c5c1}")
 	iidAccelerometerStatics = mustGUID("{a5e28b74-5a87-4a2d-becc-0f906ea061dd}")
+	// IGyrometer4 and IAccelerometer5: ReportThreshold, how much a reading must change to be reported
+	iidGyrometer4     = mustGUID("{0628a60c-4c4b-5096-94e6-c356df68bef7}")
+	iidAccelerometer5 = mustGUID("{7e7e7021-def4-53a6-af43-806fd538edf6}")
 	// TypedEventHandler<Gyrometer, GyrometerReadingChangedEventArgs> and the
 	// accelerometer's, as Windows names a parameterized interface.
 	iidGyroHandler = pinterfaceIID("pinterface({9de1c534-6ae1-11e0-84e1-18a905bcc53f};" +
@@ -223,6 +227,11 @@ func openWinSensors() (*winSensors, error) {
 			min = 10
 		}
 		s.obj.call(slotPutReportInterval, uintptr(min))
+		if s.obj == g {
+			sensorThreshold[0] = clearThreshold(s.obj, &iidGyrometer4)
+		} else {
+			sensorThreshold[1] = clearThreshold(s.obj, &iidAccelerometer5)
+		}
 		if hr := s.obj.call(slotAddReadingChanged, uintptr(unsafe.Pointer(s.d)), uintptr(unsafe.Pointer(s.token))); hr != 0 {
 			w.close()
 			return nil, errors.New("Couldn't listen to the motion sensor: " + windows.Errno(hr).Error())
@@ -282,4 +291,31 @@ func roInitialize() (func(), error) {
 		return nil, windows.Errno(r)
 	}
 	return func() { procRoUninitialize.Call() }, nil
+}
+
+// sensorThreshold is each sensor's change threshold (its X axis) before
+// clearThreshold took it to zero: the gyroscope's in degrees a second, the
+// accelerometer's in G. -1: it has none Windows lets the app set.
+var sensorThreshold = [2]float64{-1, -1}
+
+// clearThreshold asks the sensor to report every reading, however little it
+// changed. By default Windows reports one only when it moved past a threshold,
+// so a slow or steady turn came in steps, or not at all.
+func clearThreshold(s *comObject, iid *windows.GUID) float64 {
+	var withThreshold *comObject
+	if hr := s.call(slotQueryInterface, uintptr(unsafe.Pointer(iid)), uintptr(unsafe.Pointer(&withThreshold))); hr != 0 || withThreshold == nil {
+		return -1
+	}
+	defer withThreshold.release()
+	var t *comObject
+	if hr := withThreshold.call(6, uintptr(unsafe.Pointer(&t))); hr != 0 || t == nil { // get_ReportThreshold
+		return -1
+	}
+	defer t.release()
+	var before float64
+	t.call(6, uintptr(unsafe.Pointer(&before))) // get_X
+	for slot := 7; slot <= 11; slot += 2 {      // put_X, put_Y, put_Z (a double: Go passes it in XMM too)
+		t.call(slot, uintptr(math.Float64bits(0)))
+	}
+	return before
 }

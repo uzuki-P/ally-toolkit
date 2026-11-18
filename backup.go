@@ -40,8 +40,10 @@ type settings struct {
 	AutoFix      bool   `json:"autoFix"`
 	BackupDir    string `json:"backupDir"`
 	GyroServer   bool   `json:"gyroServer"`
+	KeepAwake    bool   `json:"keepAwake"`
 	GyroInvertUD bool   `json:"gyroInvertUpDown"`
 	GyroInvertLR bool   `json:"gyroInvertLeftRight"`
+	GyroPreview  int    `json:"gyroPreview"` // 0: the Ally as held, 1: as games see it
 }
 
 func settingsPath() string {

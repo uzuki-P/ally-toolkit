@@ -38,7 +38,7 @@ func (a *app) gyroView(c *ui.Context, pl palette) {
 		ui.Column(c).Gap(4).Children(func() {
 			ui.Text(c, "Gyro for games").FontSize(17).FontWeight(600)
 			ui.Text(c, "Savage Wind, Cemu, Yuzu, Dolphin and other games that read a DSU motion server get the Ally's gyro, "+
-				"with Handheld Companion's axes for the "+a.gyro.model.name+".").FontSize(13).TextColor(pl.muted)
+				"its axes set for the "+a.gyro.model.name+".").FontSize(13).TextColor(pl.muted)
 		})
 		a.switchRow(c, pl, &a.cfg.GyroServer, "Send the gyro to games",
 			"A DSU server at 127.0.0.1:26760, on this PC only.", func(on bool) { a.setGyro(on) })
@@ -58,10 +58,20 @@ func (a *app) gyroView(c *ui.Context, pl palette) {
 		if st.err != "" {
 			return
 		}
+		ui.Row(c).Children(func() {
+			if ui.Segmented(c, &a.cfg.GyroPreview, "As you hold it", "As games see it").Changed() {
+				a.gyroCentered = false
+				_ = a.cfg.save()
+			}
+		})
 		a.gyroPreview(c, pl, st)
+		caption := "The Ally as you hold it. Tilt and turn it: the drawing should follow, and stay put when you stop."
+		if a.cfg.GyroPreview == 1 {
+			caption = "What games get. Held as you play, the Ally reads as a controller lying flat, screen up. If the " +
+				"drawing tilts the wrong way or creeps back after a tilt, the axes are wrong for games too."
+		}
 		ui.Row(c).Gap(14).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "Games see the Ally as a controller lying flat, screen up. Hold it as you play, then tilt and "+
-				"turn it: the drawing should follow, and stay put when you stop.").FontSize(13).TextColor(pl.muted).Grow(1).Shrink(1)
+			ui.Text(c, caption).FontSize(13).TextColor(pl.muted).Grow(1).Shrink(1)
 			if ui.Button(c, "Center").Clicked() {
 				a.gyroCentered = false
 			}
@@ -174,7 +184,10 @@ func (v *camera) disc(out *[]facet, x, y, z, r float64, col ui.Color, lift float
 }
 
 func (a *app) gyroPreview(c *ui.Context, pl palette, st gyroStatus) {
-	q := st.pose
+	q := st.held
+	if a.cfg.GyroPreview == 1 {
+		q = st.pose
+	}
 	if !st.live {
 		q = quat{w: 1} // (lying flat, until the first reading)
 	}

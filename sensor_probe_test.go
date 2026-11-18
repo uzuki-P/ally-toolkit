@@ -38,6 +38,7 @@ loop:
 			break loop
 		}
 	}
+	t.Logf("change thresholds before: gyroscope %g deg/s, accelerometer %g G (-1: none settable)", sensorThreshold[0], sensorThreshold[1])
 	g, a, ok := s.read()
 	t.Logf("%d gyroscope readings in 3 s; both sensors read: %v; gyroscope %.2f %.2f %.2f deg/s, accelerometer %.3f %.3f %.3f G",
 		n, ok, g.x, g.y, g.z, a.x, a.y, a.z)
