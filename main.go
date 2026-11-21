@@ -44,6 +44,9 @@ type app struct {
 	gyroYaw0     float64 // the preview's straight ahead (Center)
 	gyroCentered bool
 
+	page        string // the window's page: pageGyro, …
+	settingsErr string
+
 	pkg     paths
 	pkgErr  string
 	combos  []string
@@ -169,11 +172,30 @@ func (a *app) setCrateFix(on bool) {
 	a.updateTrayMenu()
 }
 
+func (a *app) setTheme(theme int) {
+	a.cfg.Theme = theme
+	_ = a.cfg.save()
+	if a.win != nil { // (tests have no app to theme)
+		mygo.Theme.SetSource(themeSource(theme))
+	}
+}
+
+func themeSource(theme int) mygo.ThemeSource {
+	switch theme {
+	case themeLight:
+		return mygo.ThemeLight
+	case themeDark:
+		return mygo.ThemeDark
+	}
+	return mygo.ThemeSystem
+}
+
 func (a *app) syncWatch() { a.watch.enabled.Store(a.cfg.AutoFix && a.cfg.CrateFix) }
 
 func (a *app) setStartup(on bool) {
+	a.settingsErr = ""
 	if err := setStartup(on); err != nil {
-		a.errText = "Couldn't change Start with Windows: " + err.Error()
+		a.settingsErr = "Couldn't change Start with Windows: " + err.Error()
 	}
 	a.startup = startupEnabled()
 	a.updateTrayMenu()
@@ -269,16 +291,17 @@ func (a *app) makeTray() {
 	// The fix's items sit in one submenu, there only while the fix is shown.
 	a.fixMenu = &mygo.MenuItem{Label: "Armoury Crate fix", Hidden: !a.cfg.CrateFix, Submenu: []*mygo.MenuItem{
 		{Label: "Open Armoury Crate", Click: func(*mygo.MenuItem, *mygo.Window) { a.onMain(a.openClicked) }},
-		{Label: "Back up layout", Click: func(*mygo.MenuItem, *mygo.Window) { a.onMain(a.backupNow) }},
 		mygo.Separator(),
 		a.autoItem,
 	}}
 	a.trayMenu = mygo.NewMenu([]*mygo.MenuItem{
 		{Label: "Show " + appName, Click: func(*mygo.MenuItem, *mygo.Window) { a.showWindow() }},
 		mygo.Separator(),
-		a.fixMenu,
 		a.gyroItem,
 		a.awakeItem,
+		{Label: "Back up layout", Click: func(*mygo.MenuItem, *mygo.Window) { a.onMain(a.backupNow) }},
+		a.fixMenu,
+		mygo.Separator(),
 		a.startItem,
 		mygo.Separator(),
 		{Role: mygo.RoleQuit},
@@ -313,14 +336,15 @@ func main() {
 	mygo.App.OnQuitCanceled(func() { quitting = false })
 	mygo.App.OnSecondInstance(func([]string, string) { a.showWindow() })
 
+	mygo.Theme.SetSource(themeSource(a.cfg.Theme)) // (before Run: it starts in it)
 	mygo.App.WhenReady(func() {
 		a.win = mygo.NewWindow(mygo.WindowOptions{
 			Title:     appName,
-			Width:     600,
-			Height:    720,
-			MinWidth:  460,
+			Width:     960,
+			Height:    680,
+			MinWidth:  420,
 			MinHeight: 480,
-			StateKey:  "main",
+			StateKey:  "main-v2", // (v2: the rail; the narrow window's size of before doesn't come back)
 			Hidden:    inTray,
 			Content:   ui.View(a.view),
 		})

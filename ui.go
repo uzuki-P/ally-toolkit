@@ -1,7 +1,9 @@
 package main
 
 import (
+	_ "embed"
 	"fmt"
+	"log"
 	"math"
 	"strings"
 	"time"
@@ -9,44 +11,125 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
-// Design: the window takes after the Ally itself. Surfaces are its white
-// shell (or graphite in dark mode), type is Bahnschrift, Windows' DIN, as
-// printed on hardware. The one loud thing is the ring, the Ally's joystick
-// light: one segment for each step of a launch, lit violet to magenta as
-// the steps finish.
+// Design: the window takes after the Ally itself, a landscape handheld
+// held in two hands. Surfaces are its shell, white or graphite. Names and
+// titles are set in Barlow Semi Condensed, narrow and squared off as type
+// printed on hardware; the rest is Bahnschrift, Windows' own DIN. The one
+// loud thing is light: the ring around the
+// Ally's sticks. Each tool in the rail wears a small ring, lit violet to
+// magenta while the tool is working and dark while it is not, so the rail
+// reads at a glance like the device's own status lights. Everything else
+// stays quiet.
+//
+// The rail is recessed, a shade deeper than the pane; the chosen tool's
+// row takes the pane's color and runs into it, as a tab does.
+
+// The accent is Material Design's pink 500, on every control that is on or
+// chosen. Small text in it, the links, takes a shade that reads on the
+// surface: pink 700 on light, pink 300 on dark. The rings run from violet
+// to the same pink, as the Ally's lights do.
+var accent = ui.Hex("#E91E63") // Material pink 500
 
 type palette struct {
-	shell, ink, muted, line, ringA, ringB, ok, bad ui.Color
+	recess, shell, raised, ink, muted, line ui.Color
+	accentText                              ui.Color // pink for small text
+	ringA, ringB                            ui.Color
+	ok, bad                                 ui.Color
 }
 
 func paletteFor(dark bool) palette {
 	if dark {
 		return palette{
-			shell: ui.Hex("#16181c"), ink: ui.Hex("#e8ebf0"), muted: ui.Hex("#959cab"),
-			line: ui.Hex("#2c3038"), ringA: ui.Hex("#9a80ff"), ringB: ui.Hex("#f062b4"),
+			recess: ui.Hex("#101216"), shell: ui.Hex("#191b20"), raised: ui.Hex("#20232a"),
+			ink: ui.Hex("#e8ebf0"), muted: ui.Hex("#959cab"), line: ui.Hex("#2c3038"),
+			accentText: ui.Hex("#F06292"), // pink 300
+			ringA:      ui.Hex("#9a80ff"), ringB: accent,
 			ok: ui.Hex("#3cc68f"), bad: ui.Hex("#ff7272"),
 		}
 	}
 	return palette{
-		shell: ui.Hex("#eceef1"), ink: ui.Hex("#1b1e24"), muted: ui.Hex("#636b7a"),
-		line: ui.Hex("#d3d8df"), ringA: ui.Hex("#6c4cf5"), ringB: ui.Hex("#d6378f"),
+		recess: ui.Hex("#dde1e7"), shell: ui.Hex("#f0f2f5"), raised: ui.Hex("#ffffff"),
+		ink: ui.Hex("#1b1e24"), muted: ui.Hex("#5f6776"), line: ui.Hex("#d0d5dd"),
+		accentText: ui.Hex("#C2185B"), // pink 700
+		ringA:      ui.Hex("#6c4cf5"), ringB: accent,
 		ok: ui.Hex("#17885a"), bad: ui.Hex("#c93c3c"),
 	}
 }
 
-const fontFamily = "Bahnschrift, Segoe UI"
-
-// segColor is the color of a lit ring segment: violet to magenta around.
-func (pl palette) segColor(i int) ui.Color {
-	return pl.ringA.MixOklab(pl.ringB, float32(i)/float32(stepCount-1))
+// choice is a row of options, one chosen, filled with the accent so the
+// choice shows at a glance. It reports whether the choice changed.
+func choice(c *ui.Context, pl palette, sel *int, labels ...string) bool {
+	changed := false
+	ui.Row(c).Gap(2).Padding(3).Radius(10).Background(pl.recess).Role(ui.RoleTabList).Children(func() {
+		for i, label := range labels {
+			on := *sel == i
+			b := ui.ButtonBase(c).Role(ui.RoleTab).Label(label).AccessSelected(on).Key(i).
+				Padding(7, 16).Radius(8).Cursor(ui.CursorPointer)
+			col := pl.muted
+			switch {
+			case on:
+				b.Background(accent)
+				col = ui.Hex("#ffffff")
+			case b.Hovered():
+				b.Background(pl.shell)
+				col = pl.ink
+			}
+			b.Children(func() { ui.Text(c, label).FontSize(14).FontWeight(500).TextColor(col) })
+			if b.Clicked() && !on {
+				*sel, changed = i, true
+			}
+		}
+	})
+	return changed
 }
+
+const (
+	fontFamily = "Bahnschrift, Segoe UI"
+	// fontNames is for names and titles: Barlow Semi Condensed, bundled
+	// (SIL Open Font License, fonts/OFL-Barlow.txt), since Windows offers
+	// Bahnschrift's narrower widths to no app by name.
+	fontNames = "Ally Names, Bahnschrift, Segoe UI"
+)
+
+//go:embed fonts/BarlowSemiCondensed-Medium.ttf
+var fontNamesMedium []byte
+
+//go:embed fonts/BarlowSemiCondensed-SemiBold.ttf
+var fontNamesSemiBold []byte
+
+func init() {
+	for _, f := range [][]byte{fontNamesMedium, fontNamesSemiBold} {
+		if err := ui.RegisterFont(f, "Ally Names"); err != nil {
+			log.Println("font:", err)
+		}
+	}
+}
+
+// The pages of the window, one per tool.
+const (
+	pageGyro     = "gyro"
+	pageCrateFix = "cratefix"
+	pageLayouts  = "layouts"
+	pageSettings = "settings"
+)
+
+// lightLevel is how lit a tool's ring is.
+type lightLevel int
+
+const (
+	lightOff   lightLevel = iota
+	lightDim              // on, but waiting: no game yet, or starting
+	lightOn               // working
+	lightFault            // failed
+)
 
 func (a *app) view(c *ui.Context) {
 	base := c.Theme()
 	pl := paletteFor(base.Dark)
-	t := *base.WithAccent(pl.ringA)
+	t := *base.WithAccent(accent)
+	t.InactiveAccent = accent // (the Ally is often driven without focus: keep the pink)
 	t.Font = fontFamily
-	t.Radius = 7
+	t.Radius = 8
 	t.Background = pl.shell
 	t.Text = pl.ink
 	t.TextMuted = pl.muted
@@ -56,27 +139,39 @@ func (a *app) view(c *ui.Context) {
 	if a.busy {
 		c.AnimationFrame() // the elapsed time in the ring ticks
 	}
+	if a.cfg.GyroServer {
+		c.After(time.Second) // the rail's gyro status
+	}
+	if a.page == pageCrateFix && !a.cfg.CrateFix || a.page == "" {
+		a.page = pageGyro
+	}
 
-	ui.Scroll(c).Fill().Children(func() {
-		ui.Column(c).Padding(28, 28, 24, 28).Gap(28).MaxWidth(620).Children(func() {
-			a.titleView(c, pl)
-			a.optionsView(c, pl)
-			if a.gyro != nil {
-				ui.Divider(c)
-				a.gyroView(c, pl)
+	// A narrow window stacks the rail above the page.
+	w, _ := c.Size()
+	narrow := w < 680
+	outer := ui.Row(c)
+	if narrow {
+		outer = ui.Column(c)
+	}
+	outer.Fill().AlignItems(ui.Stretch).Background(pl.shell).Children(func() {
+		a.rail(c, pl, narrow)
+		ui.Scroll(c).Grow(1).Shrink(1).Fill().Children(func() {
+			pane := ui.Column(c).Padding(32, 36, 32, 36).Gap(28).MaxWidth(640)
+			if narrow {
+				pane.Padding(24, 18, 24, 18)
 			}
-			// The Armoury Crate fix, which ASUS made needless, waits behind
-			// its switch in case the hang comes back.
-			if a.cfg.CrateFix {
-				ui.Divider(c)
-				a.header(c, pl)
-				a.stepsView(c, pl)
-				a.switchRow(c, pl, &a.cfg.AutoFix, "Fix it whenever Armoury Crate opens",
-					"Covers the Armoury Crate button and the Start menu.",
-					func(on bool) { a.setAutoFix(on) })
-				ui.Divider(c)
-				a.backupsView(c, pl)
-			}
+			pane.Children(func() {
+				switch a.page {
+				case pageCrateFix:
+					a.crateFixPage(c, pl)
+				case pageLayouts:
+					a.layoutsPage(c, pl)
+				case pageSettings:
+					a.settingsPage(c, pl)
+				default:
+					a.gyroPage(c, pl)
+				}
+			})
 		})
 	})
 
@@ -94,215 +189,215 @@ func (a *app) view(c *ui.Context) {
 	}
 }
 
-func (a *app) titleView(c *ui.Context, pl palette) {
-	ui.Column(c).Gap(6).Children(func() {
-		ui.Text(c, appName).FontSize(26).FontWeight(600)
-		ui.Text(c, "Extra tools for the ROG Ally.").FontSize(15).TextColor(pl.muted)
-		// Errors show in the fix's headline; with the fix hidden, here.
-		if a.errText != "" && !a.cfg.CrateFix {
-			ui.Text(c, a.errText).FontSize(13).TextColor(pl.bad)
+// ---- the rail
+
+func (a *app) rail(c *ui.Context, pl palette, narrow bool) {
+	r := ui.Column(c).Background(pl.recess).Shrink(0).Role(ui.RoleNavigation).Label("Tools")
+	if narrow {
+		r.Padding(18, 14, 10, 14).Gap(12)
+	} else {
+		r.Width(264).Padding(28, 0, 18, 14).Gap(26)
+	}
+	r.Children(func() {
+		ui.Column(c).Gap(3).Padding(0, 14, 0, 12).Children(func() {
+			ui.Text(c, appName).Font(fontNames).FontSize(28).FontWeight(600).LetterSpacing(-0.2)
+			if a.gyro != nil {
+				ui.Text(c, "for the "+a.gyro.model.name).FontSize(13).TextColor(pl.muted)
+			}
+		})
+
+		items := func() {
+			level, sub := a.gyroLight()
+			a.railItem(c, pl, narrow, pageGyro, "Gyro for games", sub, level, true)
+			if a.cfg.CrateFix {
+				level, sub := a.crateFixLight()
+				a.railItem(c, pl, narrow, pageCrateFix, "Armoury Crate fix", sub, level, true)
+			}
+			a.railItem(c, pl, narrow, pageLayouts, "Layout backups", a.layoutsLine(), lightOff, false)
+			if narrow {
+				a.railItem(c, pl, narrow, pageSettings, "Settings", "", lightOff, false)
+			}
 		}
+		if narrow {
+			ui.Row(c).Gap(6).Wrap().Children(items)
+			a.awakeRow(c, pl)
+			return
+		}
+		ui.Column(c).Gap(4).Children(items)
+		ui.Spacer(c)
+		ui.Column(c).Gap(4).Children(func() {
+			a.awakeRow(c, pl)
+			a.railItem(c, pl, narrow, pageSettings, "Settings", "", lightOff, false)
+		})
 	})
 }
 
-// header heads the Armoury Crate fix: its ring, what it is doing, and the
-// button that opens Armoury Crate through it.
-func (a *app) header(c *ui.Context, pl palette) {
-	ui.Row(c).Gap(24).AlignItems(ui.Center).Children(func() {
-		a.ring(c, pl)
-		ui.Column(c).Gap(10).Grow(1).Children(func() {
-			ui.Text(c, "Armoury Crate fix").FontSize(20).FontWeight(600)
-			ui.Text(c, a.headline()).FontSize(15).TextColor(pl.muted)
-			label := "Open Armoury Crate"
-			if a.busy {
-				label = "Opening Armoury Crate"
+// railItem is a tool in the rail: its ring, its name, and a line of what it
+// is doing. ring false leaves the ring out, for pages that are not tools
+// that run, but keeps the names in line.
+func (a *app) railItem(c *ui.Context, pl palette, narrow bool, page, name, sub string, level lightLevel, ring bool) {
+	chosen := a.page == page
+	b := ui.ButtonBase(c).Role(ui.RoleTab).Label(name).AccessSelected(chosen).Key(page).
+		Cursor(ui.CursorPointer)
+	if narrow {
+		b.Padding(8, 12).Radius(8)
+	} else {
+		b.Padding(11, 14, 11, 12).Radius(10, 0, 0, 10)
+	}
+	switch {
+	case chosen:
+		b.Background(pl.shell)
+	case b.Hovered():
+		b.Background(pl.shell.Alpha(0.5))
+	}
+	b.AlignItems(ui.Stretch).Children(func() {
+		ui.Row(c).FillWidth().Gap(12).AlignItems(ui.Center).Children(func() {
+			if ring {
+				lightRing(c, pl, level, 18)
+			} else if !narrow {
+				ui.Box(c).Size(18, 18).Shrink(0)
 			}
-			ui.Row(c).Children(func() {
-				if ui.PrimaryButton(c, label).Padding(9, 18).FontSize(15).Disabled(a.busy).Clicked() {
-					a.openClicked()
+			ui.Column(c).Gap(2).Grow(1).Shrink(1).Children(func() {
+				n := ui.Text(c, name).Font(fontNames).FontSize(17).FontWeight(500)
+				if !chosen {
+					n.TextColor(pl.ink.Alpha(0.82))
+				}
+				if sub != "" && !narrow {
+					col := pl.muted
+					if level == lightFault {
+						col = pl.bad
+					}
+					ui.Text(c, sub).FontSize(12).TextColor(col).MaxLines(1)
 				}
 			})
 		})
 	})
+	if b.Clicked() {
+		a.page = page
+	}
 }
 
-// headline says, in one sentence, what the app is doing.
-func (a *app) headline() string {
+// awakeRow is Keep awake, which is one switch, so it switches in the rail.
+func (a *app) awakeRow(c *ui.Context, pl palette) {
+	level, sub := lightOff, "Off"
+	if a.cfg.KeepAwake {
+		level, sub = lightOn, "Screen stays on"
+	}
+	ui.Row(c).Gap(12).AlignItems(ui.Center).Padding(11, 14, 11, 12).Children(func() {
+		lightRing(c, pl, level, 18)
+		ui.Column(c).Gap(2).Grow(1).Children(func() {
+			ui.Text(c, "Keep awake").Font(fontNames).FontSize(17).FontWeight(500).TextColor(pl.ink.Alpha(0.82))
+			ui.Text(c, sub).FontSize(12).TextColor(pl.muted)
+		})
+		on := a.cfg.KeepAwake
+		if ui.Switch(c, &on).Label("Keep Windows awake").Changed() {
+			a.setKeepAwake(on)
+		}
+	})
+}
+
+// lightRing is the Ally's stick light, small: a ring lit violet to magenta
+// while a tool works, half lit while it waits, red when it failed.
+func lightRing(c *ui.Context, pl palette, level lightLevel, size float32) {
+	ring := ui.Box(c).Size(size, size).Radius(size / 2).Shrink(0)
+	stops := []ui.GradientStop{{Color: pl.ringA, At: 0}, {Color: pl.ringB, At: 0.5}, {Color: pl.ringA, At: 1}}
+	switch level {
+	case lightOn:
+		ring.Border(3.5, ui.Color{}).BorderConicGradient(ui.ConicGradient{Stops: stops})
+	case lightDim:
+		for i := range stops {
+			stops[i].Color = stops[i].Color.Alpha(0.4)
+		}
+		ring.Border(3.5, ui.Color{}).BorderConicGradient(ui.ConicGradient{Stops: stops})
+	case lightFault:
+		ring.Border(3.5, pl.bad)
+	default:
+		ring.Border(3.5, pl.muted.Alpha(0.35))
+	}
+}
+
+func (a *app) gyroLight() (lightLevel, string) {
+	if !a.cfg.GyroServer || a.gyro == nil {
+		return lightOff, "Off"
+	}
+	st := a.gyro.status()
 	switch {
-	case a.busy:
-		return stepStatus[a.activeStep()]
-	case a.errText != "":
-		return a.errText
+	case st.err != "":
+		return lightFault, "Stopped by an error"
+	case st.clients > 0:
+		return lightOn, "Sending to " + plural(st.clients, "game")
+	case st.live:
+		return lightDim, "Ready, no game yet"
+	default:
+		return lightDim, "Starting…"
+	}
+}
+
+func (a *app) crateFixLight() (lightLevel, string) {
+	switch {
+	case a.busy && !a.runStart.IsZero() && a.runEnd.IsZero():
+		return lightOn, "Opening Armoury Crate…"
 	case a.pkgErr != "":
-		return a.pkgErr
+		return lightFault, "Armoury Crate not found"
+	case !a.cfg.AutoFix:
+		return lightOff, "Not watching"
 	case len(a.combos) == 0:
-		return "Your Desktop layout has no key combinations, so Armoury Crate opens without help."
-	case a.cfg.AutoFix:
-		return fmt.Sprintf("Watching for Armoury Crate. Its %s will be hidden while it loads.", plural(len(a.combos), "key combination"))
+		return lightDim, "Nothing to hide"
 	default:
-		return "Automatic fixing is off. Open Armoury Crate from here to skip the hang."
+		return lightOn, "Watching for Armoury Crate"
 	}
 }
 
-// stepStatus says what the app is doing during each step.
-var stepStatus = [stepCount]string{
-	"Hiding your key combinations…",
-	"Opening Armoury Crate…",
-	"Waiting for Armoury Crate to load…",
-	"Putting your key combinations back…",
-}
+// ---- pages
 
-func (a *app) activeStep() int {
-	for i, s := range a.steps {
-		if s == stateActive {
-			return i
-		}
-	}
-	for i := stepCount - 1; i >= 0; i-- {
-		if a.steps[i] != statePending {
-			return i
-		}
-	}
-	return 0
-}
-
-// ring draws the Ally's joystick light: four segments, one per step.
-func (a *app) ring(c *ui.Context, pl palette) {
-	const size = 132
-	reduce := c.Preferences().ReduceMotion
-	steps := a.steps
-	// While it watches, the ring glows faintly, as the Ally's does at rest.
-	armed := !a.busy && a.runStart.IsZero() && a.cfg.AutoFix && len(a.combos) > 0
-	ui.Column(c).Size(size, size).Center().Shrink(0).Draw(func(p *ui.Painter, r ui.Rect) {
-		cx, cy := r.X+r.W/2, r.Y+r.H/2
-		rad := r.W/2 - 6
-		for i := 0; i < stepCount; i++ {
-			from, to := float64(i*90+6), float64((i+1)*90-6)
-			seg := arc(cx, cy, rad, from, to)
-			p.StrokePath(seg, 7, pl.line)
-			if armed {
-				p.StrokePath(seg, 7, pl.segColor(i).Alpha(0.3))
-			}
-			switch steps[i] {
-			case stateDone, stateSkipped:
-				col := pl.segColor(i)
-				if steps[i] == stateSkipped {
-					col = col.Alpha(0.45)
-				}
-				p.StrokePath(seg, 7, col)
-			case stateFailed:
-				p.StrokePath(seg, 7, pl.bad)
-			case stateActive:
-				if reduce {
-					p.StrokePath(seg, 7, pl.segColor(i).Alpha(0.6))
-					break
-				}
-				// A light that runs along the segment, as the Ally's rings do.
-				p.AnimationFrame()
-				phase := float32(p.Now().UnixMilli()%1100) / 1100
-				head := arc(cx, cy, rad, from, from+(to-from)*float64(phase))
-				p.StrokePath(head, 7, pl.segColor(i))
-			}
-		}
-	}).Children(func() {
-		big, small := a.ringText()
-		ui.Text(c, big).FontSize(30).FontWeight(600)
-		ui.Text(c, small).FontSize(12).TextColor(pl.muted)
-	})
-}
-
-// ringText is what the middle of the ring says.
-func (a *app) ringText() (string, string) {
-	switch {
-	case a.busy:
-		return fmt.Sprintf("%.1f", time.Since(a.runStart).Seconds()), "seconds"
-	case !a.runEnd.IsZero() && a.loadTook > 0:
-		return fmt.Sprintf("%.1f", a.loadTook.Seconds()), "seconds to load"
-	default:
-		return fmt.Sprint(len(a.combos)), plural0(len(a.combos), "key combo")
-	}
-}
-
-func (a *app) stepsView(c *ui.Context, pl palette) {
-	ui.Column(c).Gap(12).Children(func() {
-		heading := "How a launch goes"
-		sub := "Armoury Crate hangs on its logo while your key combinations exist, so they step aside until it has loaded."
-		if !a.runStart.IsZero() {
-			heading = "Last launch"
-			sub = a.runSource + ", " + friendlyTime(a.runStart)
-		}
-		ui.Column(c).Gap(4).Children(func() {
-			ui.Text(c, heading).FontSize(17).FontWeight(600)
-			ui.Text(c, sub).FontSize(13).TextColor(pl.muted)
+// pageHeader names the page and says what it is for. right, if any, sits
+// beside the name: the page's main switch or action.
+func pageHeader(c *ui.Context, pl palette, title, about string, right func()) {
+	ui.Row(c).Gap(20).AlignItems(ui.Start).Children(func() {
+		ui.Column(c).Gap(8).Grow(1).Shrink(1).Children(func() {
+			ui.Text(c, title).Font(fontNames).FontSize(30).FontWeight(600).LetterSpacing(-0.3).Role(ui.RoleHeading)
+			ui.Text(c, about).FontSize(15).TextColor(pl.muted).LineHeight(1.4)
 		})
-		ui.Column(c).Gap(2).Children(func() {
-			for i := 0; i < stepCount; i++ {
-				a.stepRow(c, pl, i)
-			}
-		})
-	})
-}
-
-func (a *app) stepRow(c *ui.Context, pl palette, i int) {
-	st := a.steps[i]
-	ui.Row(c).Gap(14).AlignItems(ui.Center).Padding(7, 0).Key(i).Children(func() {
-		// The step's number in a dot, filled as the ring's segment is.
-		dot := ui.Column(c).Size(26, 26).Radius(13).Center().Shrink(0)
-		num := ui.Color{}
-		switch st {
-		case stateDone:
-			dot.Background(pl.segColor(i))
-			num = ui.Hex("#ffffff")
-		case stateSkipped:
-			dot.Background(pl.segColor(i).Alpha(0.45))
-			num = ui.Hex("#ffffff")
-		case stateFailed:
-			dot.Background(pl.bad)
-			num = ui.Hex("#ffffff")
-		case stateActive:
-			dot.Border(2, pl.segColor(i))
-			num = pl.segColor(i)
-		default:
-			dot.Border(1.5, pl.line)
-			num = pl.muted
-		}
-		dot.Children(func() {
-			ui.Text(c, fmt.Sprint(i+1)).FontSize(13).FontWeight(600).TextColor(num)
-		})
-		name := ui.Text(c, stepNames[i]).FontSize(15).Grow(1)
-		if st == statePending && a.busy {
-			name.TextColor(pl.muted)
-		}
-		note := a.notes[i]
-		if note != "" {
-			col := pl.muted
-			if st == stateFailed {
-				col = pl.bad
-			}
-			ui.Text(c, note).FontSize(13).TextColor(col)
+		if right != nil {
+			ui.Row(c).Shrink(0).Padding(6, 0, 0, 0).Children(right)
 		}
 	})
 }
 
-func (a *app) optionsView(c *ui.Context, pl palette) {
-	ui.Column(c).Gap(16).Children(func() {
-		a.switchRow(c, pl, &a.cfg.KeepAwake, "Keep Windows awake",
-			"Keeps the PC and its screen on, like PowerToys Awake. The tray icon shows a green dot while it is on.",
-			func(on bool) { a.setKeepAwake(on) })
+func (a *app) settingsPage(c *ui.Context, pl palette) {
+	pageHeader(c, pl, "Settings", "How "+appName+" looks and starts, and which tools it shows.", nil)
+	if a.settingsErr != "" {
+		ui.Text(c, a.settingsErr).FontSize(13).TextColor(pl.bad)
+	}
+	ui.Column(c).Gap(22).Children(func() {
+		ui.Row(c).Gap(20).AlignItems(ui.Center).Wrap().Children(func() {
+			ui.Column(c).Gap(4).Grow(1).Shrink(1).Children(func() {
+				ui.Text(c, "Theme").FontSize(16).FontWeight(500)
+				ui.Text(c, "System follows Windows' light or dark mode.").FontSize(13).TextColor(pl.muted).LineHeight(1.4)
+			})
+			if choice(c, pl, &a.cfg.Theme, "System", "Light", "Dark") {
+				a.setTheme(a.cfg.Theme)
+			}
+		})
 		a.switchRow(c, pl, &a.startup, "Start with Windows",
 			"Waits in the tray. Click the tray icon to come back here.",
 			func(on bool) { a.setStartup(on) })
-		a.switchRow(c, pl, &a.cfg.CrateFix, "Armoury Crate fix",
-			"For Armoury Crate hanging on its logo. ASUS has fixed it; turn this on if it comes back. Adds its menu to the tray.",
-			func(on bool) { a.setCrateFix(on) })
+		a.switchRow(c, pl, &a.cfg.CrateFix, "Show the Armoury Crate fix",
+			"For Armoury Crate hanging on its logo. ASUS has fixed it; turn this on if it comes back. It adds a page here and a menu to the tray.",
+			func(on bool) {
+				a.setCrateFix(on)
+				if on {
+					a.page = pageCrateFix
+				}
+			})
 	})
 }
 
 func (a *app) switchRow(c *ui.Context, pl palette, v *bool, title, sub string, changed func(bool)) {
-	ui.Row(c).Gap(16).AlignItems(ui.Center).Children(func() {
-		ui.Column(c).Gap(3).Grow(1).Children(func() {
-			ui.Text(c, title).FontSize(15)
-			ui.Text(c, sub).FontSize(13).TextColor(pl.muted)
+	ui.Row(c).Gap(20).AlignItems(ui.Center).Children(func() {
+		ui.Column(c).Gap(4).Grow(1).Shrink(1).Children(func() {
+			ui.Text(c, title).FontSize(16).FontWeight(500)
+			ui.Text(c, sub).FontSize(13).TextColor(pl.muted).LineHeight(1.4)
 		})
 		on := *v
 		if ui.Switch(c, &on).Label(title).Changed() {
@@ -311,76 +406,9 @@ func (a *app) switchRow(c *ui.Context, pl palette, v *bool, title, sub string, c
 	})
 }
 
-func (a *app) backupsView(c *ui.Context, pl palette) {
-	ui.Column(c).Gap(14).Children(func() {
-		ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
-			ui.Column(c).Gap(4).Grow(1).Children(func() {
-				ui.Text(c, "Layout backups").FontSize(17).FontWeight(600)
-				ui.Text(c, "Zips of your Desktop layout and its key combinations.").FontSize(13).TextColor(pl.muted)
-			})
-			if ui.Button(c, "Back up now").Disabled(a.busy).Clicked() {
-				a.backupNow()
-			}
-		})
-
-		ui.Row(c).Gap(14).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "Saved in "+a.cfg.BackupDir).FontSize(13).TextColor(pl.muted).Grow(1).Shrink(1)
-			a.textAction(c, pl, "Change folder", a.chooseFolder)
-			a.textAction(c, pl, "Open folder", a.openFolder)
-		})
-
-		if a.backupMsg != "" {
-			col := pl.ok
-			if a.backupErr {
-				col = pl.bad
-			}
-			ui.Text(c, a.backupMsg).FontSize(13).TextColor(col)
-		}
-
-		ui.Column(c).Gap(0).Children(func() {
-			if len(a.backups) == 0 {
-				ui.Text(c, "No backups in this folder yet. Back up now before you change your layout.").
-					FontSize(14).TextColor(pl.muted).Padding(10, 0)
-			}
-			for i, b := range a.backups {
-				if i >= 8 {
-					break
-				}
-				a.backupRow(c, pl, b, i > 0)
-			}
-			if a.cfg.BackupDir != "" {
-				ui.Row(c).Padding(10, 0, 0, 0).Children(func() {
-					a.textAction(c, pl, "Restore from another zip…", a.restoreFromFile)
-				})
-			}
-		})
-	})
-}
-
-func (a *app) backupRow(c *ui.Context, pl palette, b backup, rule bool) {
-	row := ui.Row(c).Gap(12).AlignItems(ui.Center).Padding(10, 0).Key(b.Path)
-	if rule {
-		row.BorderWidth(1, 0, 0, 0).BorderColor(pl.line)
-	}
-	row.Children(func() {
-		ui.Column(c).Gap(2).Grow(1).Children(func() {
-			ui.Text(c, b.Time.Format("Mon 2 Jan 2006, 15:04")).FontSize(15)
-			sub := fmt.Sprintf("%.1f KB", float64(b.Size)/1024)
-			if b.Before {
-				sub = "Saved before a restore, " + sub
-			}
-			ui.Text(c, sub).FontSize(12).TextColor(pl.muted)
-		})
-		if ui.Button(c, "Restore").Disabled(a.busy).Clicked() {
-			a.restoring = b.Path
-			a.confirm = true
-		}
-	})
-}
-
 // textAction is a quiet, link-like action.
 func (a *app) textAction(c *ui.Context, pl palette, label string, fn func()) {
-	e := ui.Text(c, label).FontSize(13).TextColor(pl.ringA).Cursor(ui.CursorPointer).Shrink(0)
+	e := ui.Text(c, label).FontSize(13).TextColor(pl.accentText).Cursor(ui.CursorPointer).Shrink(0)
 	if e.Hovered() {
 		e.Underline()
 	}

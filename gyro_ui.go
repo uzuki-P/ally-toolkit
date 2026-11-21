@@ -33,17 +33,24 @@ func (a *app) setGyroInvert(ud, lr bool) {
 	_ = a.cfg.save()
 }
 
-func (a *app) gyroView(c *ui.Context, pl palette) {
+func (a *app) gyroPage(c *ui.Context, pl palette) {
+	if a.gyro == nil {
+		pageHeader(c, pl, "Gyro for games", "The gyro isn't available in this copy of the app.", nil)
+		return
+	}
 	st := a.gyro.status()
-	ui.Column(c).Gap(14).Children(func() {
-		ui.Column(c).Gap(4).Children(func() {
-			ui.Text(c, "Gyro for games").FontSize(17).FontWeight(600)
-			ui.Text(c, "Savage Wind, Cemu, Yuzu, Dolphin and other games that read a DSU motion server get the Ally's gyro, "+
-				"its axes set for the "+a.gyro.model.name+".").FontSize(13).TextColor(pl.muted)
+	pageHeader(c, pl, "Gyro for games",
+		"Savage Wind, Cemu, Yuzu, Dolphin and other games that read a DSU motion server get the Ally's gyro, "+
+			"its axes set for the "+a.gyro.model.name+". Served at 127.0.0.1:26760, on this PC only.",
+		func() {
+			on := a.cfg.GyroServer
+			if ui.Switch(c, &on).Label("Send the gyro to games").Changed() {
+				a.setGyro(on)
+			}
 		})
-		a.switchRow(c, pl, &a.cfg.GyroServer, "Send the gyro to games",
-			"A DSU server at 127.0.0.1:26760, on this PC only.", func(on bool) { a.setGyro(on) })
+	ui.Column(c).Gap(16).Children(func() {
 		if !a.cfg.GyroServer {
+			ui.Text(c, "Off. Switch it on, then pick DSU as the motion source in the game.").FontSize(14).TextColor(pl.muted)
 			return
 		}
 		if st.running {
@@ -55,12 +62,12 @@ func (a *app) gyroView(c *ui.Context, pl palette) {
 		} else if st.clients > 0 {
 			col = pl.ok
 		}
-		ui.Text(c, line).FontSize(13).TextColor(col)
+		ui.Text(c, line).FontSize(14).TextColor(col)
 		if st.err != "" {
 			return
 		}
 		ui.Row(c).Children(func() {
-			if ui.Segmented(c, &a.cfg.GyroPreview, "As you hold it", "As games see it").Changed() {
+			if choice(c, pl, &a.cfg.GyroPreview, "As you hold it", "As games see it") {
 				a.gyroCentered = false
 				_ = a.cfg.save()
 			}
@@ -221,7 +228,7 @@ func (a *app) gyroPreview(c *ui.Context, pl palette, st gyroStatus) {
 	roll := math.Atan2(-m[2][0], m[2][2]) * 180 / math.Pi
 	turn := math.Remainder((yaw-a.gyroYaw0)*180/math.Pi, 360)
 
-	ui.Column(c).Height(250).Radius(10).Background(stage).Clip().Draw(func(p *ui.Painter, r ui.Rect) {
+	ui.Column(c).Height(280).Radius(12).Background(stage).Clip().Draw(func(p *ui.Painter, r ui.Rect) {
 		v.cx, v.cy, v.k = float64(r.X+r.W/2), float64(r.Y+r.H*0.54), float64(min(r.W, r.H*1.9))*0.3/1.5
 		line := func(a, b vec3) { // (the floor, a little below it; kept inside the stage)
 			x0, y0, _ := v.screen(a)

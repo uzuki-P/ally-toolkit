@@ -21,23 +21,28 @@ func fakeApp(t *testing.T) *app {
 	}
 }
 
-// With the Armoury Crate fix switched off, its sections go and it stops
+// With the Armoury Crate fix switched off, its page goes and it stops
 // watching, but Fix it whenever is kept for when it is switched back on.
+// Layout backups stay either way.
 func TestCrateFixSwitch(t *testing.T) {
 	t.Setenv("APPDATA", t.TempDir()) // setCrateFix saves the settings
 	a := fakeApp(t)
 	a.syncWatch()
-	tt := ui.NewTester(a.view, 600, 720)
-	if !tt.HasText("Layout backups") || !a.watch.enabled.Load() {
+	a.page = pageCrateFix
+	tt := ui.NewTester(a.view, 960, 680)
+	if !tt.HasText("Open Armoury Crate") || !a.watch.enabled.Load() {
 		t.Fatal("the fix should show and watch while on")
 	}
 	a.setCrateFix(false)
 	tt.Frame()
-	if tt.HasText("Layout backups") || tt.HasText("Open Armoury Crate") {
+	if tt.HasText("Armoury Crate fix") || tt.HasText("Open Armoury Crate") {
 		t.Errorf("the fix still shows: %q", tt.Texts())
 	}
-	if !tt.HasText("Armoury Crate fix") {
-		t.Error("its switch should stay")
+	if !tt.HasText("Layout backups") {
+		t.Error("Layout backups should stay")
+	}
+	if a.page != pageGyro {
+		t.Errorf("left on page %q", a.page)
 	}
 	if a.watch.enabled.Load() {
 		t.Error("still watching while hidden")
@@ -57,7 +62,8 @@ func TestOpenButtonRunsFix(t *testing.T) {
 		done <- o
 		return nil
 	}
-	tt := ui.NewTester(a.view, 600, 720)
+	a.page = pageCrateFix
+	tt := ui.NewTester(a.view, 960, 680)
 	if !tt.HasText("Watching for Armoury Crate. Its 2 key combinations will be hidden while it loads.") {
 		t.Errorf("texts %q", tt.Texts())
 	}

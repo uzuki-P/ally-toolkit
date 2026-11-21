@@ -48,7 +48,15 @@ type settings struct {
 	GyroInvertUD bool   `json:"gyroInvertUpDown"`
 	GyroInvertLR bool   `json:"gyroInvertLeftRight"`
 	GyroPreview  int    `json:"gyroPreview"` // 0: the Ally as held, 1: as games see it
+	Theme        int    `json:"theme"`       // themeSystem, themeLight or themeDark
 }
+
+// The window's appearance: the system's, or always light or dark.
+const (
+	themeSystem = iota
+	themeLight
+	themeDark
+)
 
 func settingsPath() string {
 	dir, err := os.UserConfigDir()
