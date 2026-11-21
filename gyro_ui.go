@@ -44,7 +44,7 @@ func (a *app) gyroPage(c *ui.Context, pl palette) {
 			"its axes set for the "+a.gyro.model.name+". Served at 127.0.0.1:26760, on this PC only.",
 		func() {
 			on := a.cfg.GyroServer
-			if ui.Switch(c, &on).Label("Send the gyro to games").Changed() {
+			if ui.Switch(c, &on).Label("Send the gyro to games").Cursor(ui.CursorPointer).Changed() {
 				a.setGyro(on)
 			}
 		})
@@ -80,7 +80,7 @@ func (a *app) gyroPage(c *ui.Context, pl palette) {
 		}
 		ui.Row(c).Gap(14).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, caption).FontSize(13).TextColor(pl.muted).Grow(1).Shrink(1)
-			if ui.Button(c, "Center").Clicked() {
+			if ui.Button(c, "Center").Cursor(ui.CursorPointer).Clicked() {
 				a.gyroCentered = false
 			}
 		})

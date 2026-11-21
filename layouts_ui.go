@@ -26,7 +26,7 @@ func (a *app) layoutsPage(c *ui.Context, pl palette) {
 	pageHeader(c, pl, "Layout backups",
 		"Zips of the Desktop layout you set in Armoury Crate: its button mapping and key combinations. Back one up before you change it.",
 		func() {
-			if ui.PrimaryButton(c, "Back up now").Padding(10, 20).FontSize(15).Disabled(a.busy || a.pkgErr != "").Clicked() {
+			if ui.PrimaryButton(c, "Back up now").Padding(10, 20).FontSize(15).Disabled(a.busy || a.pkgErr != "").Cursor(hand(a.busy || a.pkgErr != "")).Clicked() {
 				a.backupNow()
 			}
 		})
@@ -80,7 +80,7 @@ func (a *app) backupRow(c *ui.Context, pl palette, b backup, rule bool) {
 			}
 			ui.Text(c, sub).FontSize(12).TextColor(pl.muted)
 		})
-		if ui.Button(c, "Restore").Disabled(a.busy || a.pkgErr != "").Clicked() {
+		if ui.Button(c, "Restore").Disabled(a.busy || a.pkgErr != "").Cursor(hand(a.busy || a.pkgErr != "")).Clicked() {
 			a.restoring = b.Path
 			a.confirm = true
 		}

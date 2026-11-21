@@ -228,8 +228,27 @@ func (a *app) rail(c *ui.Context, pl palette, narrow bool) {
 		ui.Column(c).Gap(4).Children(func() {
 			a.awakeRow(c, pl)
 			a.railItem(c, pl, narrow, pageSettings, "Settings", "", lightOff, false)
+			ui.Text(c, a.versionLine("Version ", "Development build")).FontSize(12).TextColor(pl.muted).Padding(10, 14, 0, 12)
 		})
 	})
+}
+
+// versionLine names the version running, the one in mygo.json that names
+// the installer too, after prefix; or says dev when run unpackaged.
+func (a *app) versionLine(prefix, dev string) string {
+	if a.version == "" {
+		return dev
+	}
+	return prefix + a.version
+}
+
+// hand is the cursor over a control: the pointer while it can be clicked,
+// the arrow while it is disabled.
+func hand(disabled bool) ui.Cursor {
+	if disabled {
+		return ui.CursorDefault
+	}
+	return ui.CursorPointer
 }
 
 // railItem is a tool in the rail: its ring, its name, and a line of what it
@@ -290,7 +309,7 @@ func (a *app) awakeRow(c *ui.Context, pl palette) {
 			ui.Text(c, sub).FontSize(12).TextColor(pl.muted)
 		})
 		on := a.cfg.KeepAwake
-		if ui.Switch(c, &on).Label("Keep Windows awake").Changed() {
+		if ui.Switch(c, &on).Label("Keep Windows awake").Cursor(ui.CursorPointer).Changed() {
 			a.setKeepAwake(on)
 		}
 	})
@@ -391,6 +410,7 @@ func (a *app) settingsPage(c *ui.Context, pl palette) {
 				}
 			})
 	})
+	ui.Text(c, a.versionLine(appName+" ", appName+", development build")).FontSize(13).TextColor(pl.muted)
 }
 
 func (a *app) switchRow(c *ui.Context, pl palette, v *bool, title, sub string, changed func(bool)) {
@@ -400,7 +420,7 @@ func (a *app) switchRow(c *ui.Context, pl palette, v *bool, title, sub string, c
 			ui.Text(c, sub).FontSize(13).TextColor(pl.muted).LineHeight(1.4)
 		})
 		on := *v
-		if ui.Switch(c, &on).Label(title).Changed() {
+		if ui.Switch(c, &on).Label(title).Cursor(ui.CursorPointer).Changed() {
 			changed(on)
 		}
 	})

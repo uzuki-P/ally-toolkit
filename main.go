@@ -44,6 +44,7 @@ type app struct {
 	gyroYaw0     float64 // the preview's straight ahead (Center)
 	gyroCentered bool
 
+	version     string // the installed version, from mygo.json; "" when run unpackaged
 	page        string // the window's page: pageGyro, …
 	settingsErr string
 
@@ -73,7 +74,7 @@ type app struct {
 }
 
 func newApp() *app {
-	a := &app{watch: &watcher{}, cfg: loadSettings(), fix: runFix, gyro: newGyroService()}
+	a := &app{watch: &watcher{}, cfg: loadSettings(), fix: runFix, gyro: newGyroService(), version: mygo.App.Version()}
 	a.syncWatch()
 	a.gyro.invertUD.Store(a.cfg.GyroInvertUD)
 	a.gyro.invertLR.Store(a.cfg.GyroInvertLR)

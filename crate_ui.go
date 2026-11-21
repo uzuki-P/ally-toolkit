@@ -23,7 +23,7 @@ func (a *app) crateFixPage(c *ui.Context, pl palette) {
 				label = "Opening Armoury Crate"
 			}
 			ui.Row(c).Children(func() {
-				if ui.PrimaryButton(c, label).Padding(10, 20).FontSize(15).Disabled(a.busy).Clicked() {
+				if ui.PrimaryButton(c, label).Padding(10, 20).FontSize(15).Disabled(a.busy).Cursor(hand(a.busy)).Clicked() {
 					a.openClicked()
 				}
 			})
