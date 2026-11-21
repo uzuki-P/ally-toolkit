@@ -15,9 +15,36 @@ func fakeApp(t *testing.T) *app {
 	dir := t.TempDir()
 	return &app{
 		watch:  &watcher{},
-		cfg:    settings{AutoFix: true, BackupDir: dir},
+		cfg:    settings{AutoFix: true, CrateFix: true, BackupDir: dir},
 		pkg:    paths{family: "test"},
 		combos: []string{"close tab", "next tab"},
+	}
+}
+
+// With the Armoury Crate fix switched off, its sections go and it stops
+// watching, but Fix it whenever is kept for when it is switched back on.
+func TestCrateFixSwitch(t *testing.T) {
+	t.Setenv("APPDATA", t.TempDir()) // setCrateFix saves the settings
+	a := fakeApp(t)
+	a.syncWatch()
+	tt := ui.NewTester(a.view, 600, 720)
+	if !tt.HasText("Layout backups") || !a.watch.enabled.Load() {
+		t.Fatal("the fix should show and watch while on")
+	}
+	a.setCrateFix(false)
+	tt.Frame()
+	if tt.HasText("Layout backups") || tt.HasText("Open Armoury Crate") {
+		t.Errorf("the fix still shows: %q", tt.Texts())
+	}
+	if !tt.HasText("Armoury Crate fix") {
+		t.Error("its switch should stay")
+	}
+	if a.watch.enabled.Load() {
+		t.Error("still watching while hidden")
+	}
+	a.setCrateFix(true)
+	if !a.cfg.AutoFix || !a.watch.enabled.Load() {
+		t.Error("Fix it whenever was lost")
 	}
 }
 

@@ -64,10 +64,21 @@ func (a *app) updateTrayIcon() {
 	icon, tip := a.trayIconNow(), a.trayTip()
 	_ = a.tray.SetIcon(icon, false)
 	a.tray.SetToolTip(tip)
-	if a.awakeItem != nil && a.trayMenu != nil {
-		a.awakeItem.Checked = a.cfg.KeepAwake
-		a.tray.SetMenu(a.trayMenu)
+	a.updateTrayMenu()
+}
+
+// updateTrayMenu brings the tray menu's checks, and whether it has the
+// Armoury Crate fix, in line with the settings.
+func (a *app) updateTrayMenu() {
+	if a.tray == nil || a.trayMenu == nil {
+		return
 	}
+	a.awakeItem.Checked = a.cfg.KeepAwake
+	a.autoItem.Checked = a.cfg.AutoFix
+	a.gyroItem.Checked = a.cfg.GyroServer
+	a.startItem.Checked = a.startup
+	a.fixMenu.Hidden = !a.cfg.CrateFix
+	a.tray.SetMenu(a.trayMenu)
 }
 
 func (a *app) trayIconNow() []byte {
@@ -79,7 +90,7 @@ func (a *app) trayIconNow() []byte {
 
 func (a *app) trayTip() string {
 	if a.cfg.KeepAwake {
-		return "Armoury Crate Fix — keeping Windows awake"
+		return appName + " — keeping Windows awake"
 	}
-	return "Armoury Crate Fix"
+	return appName
 }

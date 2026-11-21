@@ -37,7 +37,11 @@ func (b backup) Name() string { return filepath.Base(b.Path) }
 
 // Settings are kept in %APPDATA%\armoury-crate-fix\settings.json.
 type settings struct {
-	AutoFix      bool   `json:"autoFix"`
+	AutoFix bool `json:"autoFix"`
+	// CrateFix shows the Armoury Crate launch fix: its sections in the
+	// window, its tray submenu, and its watcher. Off by default: ASUS fixed
+	// the hang, and this stays for if it comes back.
+	CrateFix     bool   `json:"crateFix"`
 	BackupDir    string `json:"backupDir"`
 	GyroServer   bool   `json:"gyroServer"`
 	KeepAwake    bool   `json:"keepAwake"`

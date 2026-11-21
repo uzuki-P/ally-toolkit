@@ -31,7 +31,8 @@ func TestSnapshots(t *testing.T) {
 		return a
 	}
 	states := map[string]func(a *app){
-		"idle": func(a *app) {},
+		"idle":    func(a *app) {},
+		"fix-off": func(a *app) { a.cfg.CrateFix = false },
 		"running": func(a *app) {
 			a.busy = true
 			a.runStart = time.Now().Add(-3200 * time.Millisecond)

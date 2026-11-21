@@ -13,6 +13,11 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
+// appName is what the app is called. It began as a fix for Armoury Crate and
+// grew into extra tools for the ROG Ally. Its files, settings, startup entry
+// and install keep the old armoury-crate-fix name, so updates install over it.
+const appName = "Ally Toolkit"
+
 //go:embed resources/tray.png
 var trayIcon []byte
 
@@ -30,6 +35,10 @@ type app struct {
 
 	awake     awakeHolder
 	awakeItem *mygo.MenuItem
+	autoItem  *mygo.MenuItem
+	gyroItem  *mygo.MenuItem
+	startItem *mygo.MenuItem
+	fixMenu   *mygo.MenuItem // the tray's Armoury Crate fix submenu
 	trayMenu  *mygo.Menu
 
 	gyroYaw0     float64 // the preview's straight ahead (Center)
@@ -62,7 +71,7 @@ type app struct {
 
 func newApp() *app {
 	a := &app{watch: &watcher{}, cfg: loadSettings(), fix: runFix, gyro: newGyroService()}
-	a.watch.enabled.Store(a.cfg.AutoFix)
+	a.syncWatch()
 	a.gyro.invertUD.Store(a.cfg.GyroInvertUD)
 	a.gyro.invertLR.Store(a.cfg.GyroInvertLR)
 	a.startup = startupEnabled()
@@ -145,15 +154,29 @@ func (a *app) openClicked() {
 
 func (a *app) setAutoFix(on bool) {
 	a.cfg.AutoFix = on
-	a.watch.enabled.Store(on)
+	a.syncWatch()
 	_ = a.cfg.save()
+	a.updateTrayMenu()
 }
+
+// setCrateFix shows or hides the Armoury Crate launch fix. Hidden, it also
+// stops watching for Armoury Crate; Fix it whenever is kept for when it is
+// shown again.
+func (a *app) setCrateFix(on bool) {
+	a.cfg.CrateFix = on
+	a.syncWatch()
+	_ = a.cfg.save()
+	a.updateTrayMenu()
+}
+
+func (a *app) syncWatch() { a.watch.enabled.Store(a.cfg.AutoFix && a.cfg.CrateFix) }
 
 func (a *app) setStartup(on bool) {
 	if err := setStartup(on); err != nil {
 		a.errText = "Couldn't change Start with Windows: " + err.Error()
 	}
 	a.startup = startupEnabled()
+	a.updateTrayMenu()
 }
 
 func (a *app) backupNow() {
@@ -235,23 +258,28 @@ func (a *app) showWindow() {
 }
 
 func (a *app) makeTray() {
-	auto := &mygo.MenuItem{Label: "Fix it whenever Armoury Crate opens", Type: mygo.MenuItemCheckbox, Checked: a.cfg.AutoFix,
+	a.autoItem = &mygo.MenuItem{Label: "Fix it whenever Armoury Crate opens", Type: mygo.MenuItemCheckbox, Checked: a.cfg.AutoFix,
 		Click: func(it *mygo.MenuItem, _ *mygo.Window) { a.onMain(func() { a.setAutoFix(it.Checked) }) }}
-	gyro := &mygo.MenuItem{Label: "Send the gyro to games", Type: mygo.MenuItemCheckbox, Checked: a.cfg.GyroServer,
+	a.gyroItem = &mygo.MenuItem{Label: "Send the gyro to games", Type: mygo.MenuItemCheckbox, Checked: a.cfg.GyroServer,
 		Click: func(it *mygo.MenuItem, _ *mygo.Window) { a.onMain(func() { a.setGyro(it.Checked) }) }}
 	a.awakeItem = &mygo.MenuItem{Label: "Keep Windows awake", Type: mygo.MenuItemCheckbox, Checked: a.cfg.KeepAwake,
 		Click: func(it *mygo.MenuItem, _ *mygo.Window) { a.onMain(func() { a.setKeepAwake(it.Checked) }) }}
-	startup := &mygo.MenuItem{Label: "Start with Windows", Type: mygo.MenuItemCheckbox, Checked: a.startup,
+	a.startItem = &mygo.MenuItem{Label: "Start with Windows", Type: mygo.MenuItemCheckbox, Checked: a.startup,
 		Click: func(it *mygo.MenuItem, _ *mygo.Window) { a.onMain(func() { a.setStartup(it.Checked) }) }}
-	a.trayMenu = mygo.NewMenu([]*mygo.MenuItem{
-		{Label: "Show Armoury Crate Fix", Click: func(*mygo.MenuItem, *mygo.Window) { a.showWindow() }},
+	// The fix's items sit in one submenu, there only while the fix is shown.
+	a.fixMenu = &mygo.MenuItem{Label: "Armoury Crate fix", Hidden: !a.cfg.CrateFix, Submenu: []*mygo.MenuItem{
 		{Label: "Open Armoury Crate", Click: func(*mygo.MenuItem, *mygo.Window) { a.onMain(a.openClicked) }},
 		{Label: "Back up layout", Click: func(*mygo.MenuItem, *mygo.Window) { a.onMain(a.backupNow) }},
 		mygo.Separator(),
-		auto,
-		gyro,
+		a.autoItem,
+	}}
+	a.trayMenu = mygo.NewMenu([]*mygo.MenuItem{
+		{Label: "Show " + appName, Click: func(*mygo.MenuItem, *mygo.Window) { a.showWindow() }},
+		mygo.Separator(),
+		a.fixMenu,
+		a.gyroItem,
 		a.awakeItem,
-		startup,
+		a.startItem,
 		mygo.Separator(),
 		{Role: mygo.RoleQuit},
 	})
@@ -287,7 +315,7 @@ func main() {
 
 	mygo.App.WhenReady(func() {
 		a.win = mygo.NewWindow(mygo.WindowOptions{
-			Title:     "Armoury Crate Fix",
+			Title:     appName,
 			Width:     600,
 			Height:    720,
 			MinWidth:  460,

@@ -59,15 +59,24 @@ func (a *app) view(c *ui.Context) {
 
 	ui.Scroll(c).Fill().Children(func() {
 		ui.Column(c).Padding(28, 28, 24, 28).Gap(28).MaxWidth(620).Children(func() {
-			a.header(c, pl)
-			a.stepsView(c, pl)
+			a.titleView(c, pl)
 			a.optionsView(c, pl)
-			ui.Divider(c)
 			if a.gyro != nil {
-				a.gyroView(c, pl)
 				ui.Divider(c)
+				a.gyroView(c, pl)
 			}
-			a.backupsView(c, pl)
+			// The Armoury Crate fix, which ASUS made needless, waits behind
+			// its switch in case the hang comes back.
+			if a.cfg.CrateFix {
+				ui.Divider(c)
+				a.header(c, pl)
+				a.stepsView(c, pl)
+				a.switchRow(c, pl, &a.cfg.AutoFix, "Fix it whenever Armoury Crate opens",
+					"Covers the Armoury Crate button and the Start menu.",
+					func(on bool) { a.setAutoFix(on) })
+				ui.Divider(c)
+				a.backupsView(c, pl)
+			}
 		})
 	})
 
@@ -85,11 +94,24 @@ func (a *app) view(c *ui.Context) {
 	}
 }
 
+func (a *app) titleView(c *ui.Context, pl palette) {
+	ui.Column(c).Gap(6).Children(func() {
+		ui.Text(c, appName).FontSize(26).FontWeight(600)
+		ui.Text(c, "Extra tools for the ROG Ally.").FontSize(15).TextColor(pl.muted)
+		// Errors show in the fix's headline; with the fix hidden, here.
+		if a.errText != "" && !a.cfg.CrateFix {
+			ui.Text(c, a.errText).FontSize(13).TextColor(pl.bad)
+		}
+	})
+}
+
+// header heads the Armoury Crate fix: its ring, what it is doing, and the
+// button that opens Armoury Crate through it.
 func (a *app) header(c *ui.Context, pl palette) {
 	ui.Row(c).Gap(24).AlignItems(ui.Center).Children(func() {
 		a.ring(c, pl)
 		ui.Column(c).Gap(10).Grow(1).Children(func() {
-			ui.Text(c, "Armoury Crate Fix").FontSize(26).FontWeight(600)
+			ui.Text(c, "Armoury Crate fix").FontSize(20).FontWeight(600)
 			ui.Text(c, a.headline()).FontSize(15).TextColor(pl.muted)
 			label := "Open Armoury Crate"
 			if a.busy {
@@ -264,15 +286,15 @@ func (a *app) stepRow(c *ui.Context, pl palette, i int) {
 
 func (a *app) optionsView(c *ui.Context, pl palette) {
 	ui.Column(c).Gap(16).Children(func() {
-		a.switchRow(c, pl, &a.cfg.AutoFix, "Fix it whenever Armoury Crate opens",
-			"Covers the Armoury Crate button and the Start menu.",
-			func(on bool) { a.setAutoFix(on) })
 		a.switchRow(c, pl, &a.cfg.KeepAwake, "Keep Windows awake",
 			"Keeps the PC and its screen on, like PowerToys Awake. The tray icon shows a green dot while it is on.",
 			func(on bool) { a.setKeepAwake(on) })
 		a.switchRow(c, pl, &a.startup, "Start with Windows",
 			"Waits in the tray. Click the tray icon to come back here.",
 			func(on bool) { a.setStartup(on) })
+		a.switchRow(c, pl, &a.cfg.CrateFix, "Armoury Crate fix",
+			"For Armoury Crate hanging on its logo. ASUS has fixed it; turn this on if it comes back. Adds its menu to the tray.",
+			func(on bool) { a.setCrateFix(on) })
 	})
 }
 

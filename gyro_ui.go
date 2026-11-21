@@ -23,6 +23,7 @@ func (a *app) setGyro(on bool) {
 	} else {
 		a.gyro.stop()
 	}
+	a.updateTrayMenu()
 }
 
 func (a *app) setGyroInvert(ud, lr bool) {

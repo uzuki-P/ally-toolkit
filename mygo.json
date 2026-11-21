@@ -1,6 +1,9 @@
 {
   "name": "armoury-crate-fix",
   "identifier": "com.example.armourycratefix",
-  "version": "0.4.3",
-  "out": "build"
+  "version": "0.5.0",
+  "out": "build",
+  "windows": {
+    "displayName": "Ally Toolkit"
+  }
 }
